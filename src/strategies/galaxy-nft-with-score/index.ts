@@ -2,7 +2,7 @@ import fetch from 'cross-fetch';
 import { subgraphRequest } from '../../utils';
 
 export const author = 'alberthaotan';
-export const version = '0.3.0';
+export const version = '0.3.2';
 
 const Networks: {
   [network: string]: {
@@ -62,25 +62,29 @@ export async function strategy(
     map[address.toLowerCase()] = address;
     return map;
   }, {});
+  //addresses.map((a) => a.toLowerCase())
 
   const subgraphParams = {
-    ownerships: {
+    nftContracts: {
       __args: {
         where: {
-          owner_in: addresses.map((a) => a.toLowerCase())
+          id_in: options.params.NFTCoreAddress.map((a) => a.toLowerCase())
         }
       },
-      owner: true,
-      nft: {
+      id: true,
+      nfts: {
+        __args: {
+          first: 1000
+        },
         tokenID: true,
-        contract: {
-          id: true
+        ownership: {
+          owner: true
         }
       }
     }
   };
   if (snapshot !== 'latest') {
-    subgraphParams.ownerships.__args['block'] = { number: snapshot };
+    subgraphParams.nftContracts.__args['block'] = { number: snapshot };
   }
 
   const graphqlParams = {
@@ -132,25 +136,27 @@ export async function strategy(
   );
 
   const ownerToScore: OwnerToScore = {};
-  const ownersWithNfts: OwnerWithNfts = graphqlData.data.allNFTsByOwnersCoresAndChain.reduce(
-    (map, item) => {
+  const ownersWithNfts: OwnerWithNfts =
+    graphqlData.data.allNFTsByOwnersCoresAndChain.reduce((map, item) => {
       map[item.owner.toLowerCase()] = item.nfts.reduce((m, i) => {
-        m[i.nftCore.contractAddress.toLowerCase() + '-' + i.id] = i.name;
+        if (!options.params.blacklistNFTID?.includes(i.id)) {
+          m[i.nftCore.contractAddress.toLowerCase() + '-' + i.id] = i.name;
+        }
         return m;
       }, {});
       return map;
-    },
-    {}
-  );
+    }, {});
 
   const subgraphOwnersWithNfts: OwnerWithNfts = {};
-  subgraphData.ownerships.forEach((ownership) => {
-    if (!(ownership.owner in subgraphOwnersWithNfts)) {
-      subgraphOwnersWithNfts[ownership.owner] = {};
-    }
-    subgraphOwnersWithNfts[ownership.owner][
-      ownership.nft.contract.id + '-' + ownership.nft.tokenID
-    ] = '';
+  subgraphData.nftContracts.forEach((nftContract) => {
+    nftContract.nfts.forEach((nft) => {
+      if (!(nft.ownership[0].owner in subgraphOwnersWithNfts)) {
+        subgraphOwnersWithNfts[nft.ownership[0].owner] = {};
+      }
+      subgraphOwnersWithNfts[nft.ownership[0].owner][
+        nftContract.id + '-' + nft.tokenID
+      ] = '';
+    });
   });
 
   // Intersect nft holdings of owners from graphql and subgraph returns
@@ -166,10 +172,12 @@ export async function strategy(
   Object.keys(subgraphOwnersWithNfts).forEach((owner) => {
     Object.keys(subgraphOwnersWithNfts[owner]).forEach((tokenId) => {
       const nftName = subgraphOwnersWithNfts[owner][tokenId];
-      if (nftName in ownerToNftCount[owner]) {
-        ownerToNftCount[owner][nftName]++;
-      } else {
-        ownerToNftCount[owner][nftName] = 1;
+      if (nftName != '') {
+        if (nftName in ownerToNftCount[owner]) {
+          ownerToNftCount[owner][nftName]++;
+        } else {
+          ownerToNftCount[owner][nftName] = 1;
+        }
       }
     });
   });
